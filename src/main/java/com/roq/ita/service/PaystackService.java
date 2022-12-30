@@ -1,14 +1,19 @@
 package com.roq.ita.service;
 
 import com.roq.ita.exception.CustomException;
+import com.roq.ita.exception.ErrorMessage;
 import com.roq.ita.exception.InternalServerException;
 import com.roq.ita.model.*;
 import com.roq.ita.model.flutter.*;
+import com.roq.ita.model.paystack.*;
 import com.roq.ita.repository.TransactionRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
 import org.springframework.web.reactive.function.client.ClientResponse;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
@@ -19,24 +24,27 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 
-record Message(String status, String message) {}
 
 @Service
 @Slf4j
-public class BankService {
-   private static final String BANKS_URL = "banks/NG";
-   public static final String ACCT_VAL_URL = "accounts/resolve";
+public class PaystackService {
+   private static final String BANKS_URL = "bank?currency=NGN";
+   private static final String ACCT_VAL_URL = "bank/resolve";
 
-   public static final String TRANSFER_URL = "transfers";
+   private static final String TRANSFER_URL = "transfer";
+
+    private static final String RECIPIENT_URL = "transferrecipient";
 
    @Autowired
+   @Qualifier("paystackClient")
    private WebClient webClient;
 
    @Autowired
    TransactionRepository transactionRepository;
 
-   public Mono<?> banks() {
+   public Mono<?> psBanks() {
        return webClient.get()
                .uri(BANKS_URL)
                .retrieve()
@@ -50,20 +58,19 @@ public class BankService {
                        BankResponse response = new BankResponse();
                        response.setBankName(bankData.name());
                        response.setCode(bankData.code());
-                       response.setLongCode(bankData.longcode() == null ? "" : bankData.longcode());
+                       response.setLongCode(bankData.longcode());
                        bankResponses.add(response);
                    });
                    return Mono.just(bankResponses);
                });
    }
 
-   public Mono<AccountValidationResponse> accountValidationResponseMono(AccountValidationRequest request) {
-       FlutterAccountValidationRequest validationRequest = new FlutterAccountValidationRequest();
-       validationRequest.setAccount_bank(request.getCode());
-       validationRequest.setAccount_number(request.getAccountNumber());
+   public Mono<AccountValidationResponse> verifyAccount(AccountValidationRequest request) {
+       MultiValueMap<String, String> queryMap = new LinkedMultiValueMap<>();
+       queryMap.add("account_number", request.getAccountNumber());
+       queryMap.add("bank_code", request.getCode());
 
-      return webClient.post().uri(ACCT_VAL_URL)
-              .bodyValue(validationRequest)
+      return webClient.get().uri(builder -> builder.path(ACCT_VAL_URL).queryParams(queryMap).build())
               .retrieve()
               .onStatus(HttpStatus::is4xxClientError, this::handle4xxErrorResponse)
               .onStatus(HttpStatus::is5xxServerError, this::handle5xxErrorResponse)
@@ -73,21 +80,42 @@ public class BankService {
                   FlutterAccountValidationRequest data = rs.getData();
                   response.setAccountNumber(data.getAccount_number());
                   response.setBankCode(request.getCode());
-                  response.setBankName("Access Bank");
-                  response.setAccountName(data.getAccount_name() == null ? "" : data.getAccount_name());
+                  response.setAccountName(data.getAccount_name());
+                  response.setBankName("");
                   return Mono.just(response);
               });
    }
 
-    public Mono<Transaction> transfer(TransferRequest request) {
-        FlutterwaveTransferRequest transferRequest = new FlutterwaveTransferRequest();
-        transferRequest.setAccount_bank(request.getBeneficiaryBankCode());
-        transferRequest.setAccount_number(request.getBeneficiaryAccountNumber());
-        transferRequest.setAmount(Integer.parseInt(request.getAmount()));
-        transferRequest.setReference(request.getTransactionReference());
-        transferRequest.setNarration(request.getNarration());
-        transferRequest.setCallback_url(request.getCallbackUrl());
-        transferRequest.setCurrency(request.getCurrencyCode());
+   public String recipientGenerator(TransferRequest request) {
+       TransferRecipient recipient = new TransferRecipient();
+       recipient.setType("nuban");
+       recipient.setName(request.getBeneficiaryAccountName());
+       recipient.setBank_code(request.getBeneficiaryBankCode());
+       recipient.setCurrency(recipient.getCurrency());
+       recipient.setAccount_number(request.getBeneficiaryAccountNumber());
+
+       TransferRecipientResponse block = webClient.post().uri(RECIPIENT_URL)
+               .bodyValue(recipient)
+               .retrieve()
+               .onStatus(HttpStatus::is4xxClientError, this::handle4xxErrorResponse)
+               .onStatus(HttpStatus::is5xxServerError, this::handle5xxErrorResponse)
+               .bodyToMono(TransferRecipientResponse.class)
+               .block();
+
+       return block.getData().recipient_code() == null ? "" : block.getData().recipient_code();
+   }
+
+    public Mono<Transaction> psTransfer(TransferRequest request) {
+       String recipient = recipientGenerator(request);
+       if (recipient.equals("")){
+           return Mono.error(new CustomException("Recipient not yet generated"));
+       }
+       PaystackTransferRequest transferRequest = new PaystackTransferRequest();
+       transferRequest.setRecipient(recipient);
+       transferRequest.setReference(request.getTransactionReference());
+       transferRequest.setSource("balance");
+       transferRequest.setReason(request.getNarration());
+       transferRequest.setAmount(request.getAmount());
 
          Transaction response = new Transaction();
         return webClient.post().uri(TRANSFER_URL)
@@ -95,13 +123,13 @@ public class BankService {
                 .retrieve()
                 .onStatus(HttpStatus::is4xxClientError, this::handle4xxErrorResponse)
                 .onStatus(HttpStatus::is5xxServerError, this::handle5xxErrorResponse)
-                .bodyToMono(FlutterwaveTransferResponse.class)
+                .bodyToMono(PaystackTransferResponse.class)
                 .flatMap(ts -> {
-                    DataResponse data = ts.getData();
+                    TransferData data = ts.getData();
                     response.setAmount(String.valueOf(data.amount()));
-                    response.setBeneficiaryAccountName(data.full_name());
-                    response.setBeneficiaryAccountNumber(data.account_number());
-                    response.setBeneficiaryBankCode(data.bank_code());
+                    response.setBeneficiaryAccountName(request.getBeneficiaryAccountName());
+                    response.setBeneficiaryAccountNumber(request.getBeneficiaryAccountNumber());
+                    response.setBeneficiaryBankCode(request.getBeneficiaryBankCode());
                     response.setTransactionReference(data.reference());
                     response.setTransactionDateTime(LocalDateTime.now());
                     response.setCurrencyCode(data.currency());
@@ -131,9 +159,9 @@ public class BankService {
                 .onStatus(HttpStatus::is4xxClientError, this::handle4xxErrorResponse)
                 .onStatus(HttpStatus::is5xxServerError, this::handle5xxErrorResponse)
                 .onStatus(HttpStatus::isError, this::handle5xxErrorResponse)
-                .bodyToMono(FlutterwaveTransferResponse.class)
+                .bodyToMono(PaystackTransferResponse.class)
                 .flatMap(rs -> {
-                    DataResponse data = rs.getData();
+                    TransferData data = rs.getData();
                     if (data.status().equalsIgnoreCase(transaction.getStatus())){
                         return Mono.just(transaction);
                     }
@@ -144,7 +172,7 @@ public class BankService {
                 });
     }
 
-    private void checkStatus(Transaction transaction, DataResponse data) {
+    private void checkStatus(Transaction transaction, TransferData data) {
         if (data.status().equalsIgnoreCase("NEW")){
             transaction.setStatus("CREATED");
             transaction.setResponseCode("01");
