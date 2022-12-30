@@ -9,16 +9,39 @@ import org.springframework.web.context.request.WebRequest;
 @RestControllerAdvice
 public class RestResponseException {
 
-    @ExceptionHandler(CustomException.class)
-    public ResponseEntity<ErrorMessage> customException(CustomException notFoundException, WebRequest webRequest) {
-        ErrorMessage message = new ErrorMessage("4xx", notFoundException.getMessage());
-        return ResponseEntity.status(HttpStatus.MULTI_STATUS).body(message);
+    @ExceptionHandler(BadRequestException.class)
+    public ResponseEntity<ErrorMessage> customException(BadRequestException badRequestException, WebRequest webRequest) {
+        ErrorMessage message = new ErrorMessage("4xx", badRequestException.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(message);
+    }
+
+    @ExceptionHandler(NotFoundException.class)
+    public ResponseEntity<ErrorMessage> notFound(NotFoundException notFoundException, WebRequest webRequest) {
+        ErrorMessage message = new ErrorMessage("404", notFoundException.getMessage());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(message);
+    }
+    @ExceptionHandler(ForbiddenException.class)
+    public ResponseEntity<ErrorMessage> forbidden(ForbiddenException forbiddenException, WebRequest webRequest) {
+        ErrorMessage message = new ErrorMessage("4xx", forbiddenException.getMessage());
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(message);
+    }
+
+    @ExceptionHandler(BadGatewayException.class)
+    public ResponseEntity<ErrorMessage> badGateway(BadGatewayException badGatewayException, WebRequest webRequest) {
+        ErrorMessage message = new ErrorMessage("4xx", badGatewayException.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(message);
+    }
+
+    @ExceptionHandler(GatewayTimeoutException.class)
+    public ResponseEntity<ErrorMessage> badRequest(GatewayTimeoutException gatewayTimeoutException, WebRequest webRequest) {
+        ErrorMessage message = new ErrorMessage("5xx", gatewayTimeoutException.getMessage());
+        return ResponseEntity.status(HttpStatus.GATEWAY_TIMEOUT).body(message);
     }
 
     @ExceptionHandler(InternalServerException.class)
     public ResponseEntity<ErrorMessage> internalServer(InternalServerException internalServer, WebRequest webRequest) {
         ErrorMessage message = new ErrorMessage("5xx", internalServer.getMessage());
-        return ResponseEntity.status(500).body(message);
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(message);
     }
 
     @ExceptionHandler(UnauthorizedException.class)

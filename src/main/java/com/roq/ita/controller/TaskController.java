@@ -2,10 +2,8 @@ package com.roq.ita.controller;
 
 import com.roq.ita.exception.ErrorMessage;
 import com.roq.ita.model.AccountValidationRequest;
-import com.roq.ita.model.Transaction;
 import com.roq.ita.model.TransferRequest;
-import com.roq.ita.repository.TransactionRepository;
-import com.roq.ita.service.BankService;
+import com.roq.ita.service.FlutterwaveService;
 import com.roq.ita.service.PaystackService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -13,14 +11,12 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Mono;
 
-import java.time.LocalDateTime;
-
 @RestController
 @RequestMapping("api/v1/core-banking/")
 @Slf4j
 public class TaskController {
     @Autowired
-    BankService bankService;
+    FlutterwaveService flutterwaveService;
 
     @Autowired
     PaystackService paystackService;
@@ -32,12 +28,12 @@ public class TaskController {
         if (Provider.equalsIgnoreCase("paystack")) {
             return paystackService.psBanks();
         }
-        return bankService.banks();
+        return flutterwaveService.banks();
     }
 
     @GetMapping(value = "transaction/{reference}")
     public Mono<?> getTransaction (@PathVariable String reference) {
-        return bankService.transactionMono(reference);
+        return flutterwaveService.transactionMono(reference);
     }
 
     @PostMapping(value = "validateBankAccount")
@@ -46,20 +42,20 @@ public class TaskController {
         if (Provider.equalsIgnoreCase("paystack")) {
             return paystackService.verifyAccount(request);
         }
-        return bankService.accountValidationResponseMono(request);
+        return flutterwaveService.accountValidationResponseMono(request);
     }
 
     @PostMapping(value = "transfer")
     public Mono<?> transfer (@RequestBody TransferRequest request,
                              @RequestParam(required = false, defaultValue = "FLUTTER_WAVE") String Provider){
-        if (bankService.getTransaction(request.getTransactionReference()).isPresent()){
+        if (flutterwaveService.getTransaction(request.getTransactionReference()).isPresent()){
             return Mono.just(new ErrorMessage("Already Exist", "Transaction is already exist"));
         }
 
         if (Provider.equalsIgnoreCase("paystack")) {
             return paystackService.psTransfer(request);
         }
-        return bankService.transfer(request);
+        return flutterwaveService.transfer(request);
     }
 
     @PostMapping(value = "recipient")

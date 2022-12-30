@@ -1,6 +1,6 @@
 package com.roq.ita.service;
 
-import com.roq.ita.exception.CustomException;
+import com.roq.ita.exception.BadRequestException;
 import com.roq.ita.exception.InternalServerException;
 import com.roq.ita.model.*;
 import com.roq.ita.model.flutter.*;
@@ -24,11 +24,11 @@ record Message(String status, String message) {}
 
 @Service
 @Slf4j
-public class BankService {
+public class FlutterwaveService {
    private static final String BANKS_URL = "banks/NG";
-   public static final String ACCT_VAL_URL = "accounts/resolve";
+   private static final String ACCT_VAL_URL = "accounts/resolve";
 
-   public static final String TRANSFER_URL = "transfers";
+   private static final String TRANSFER_URL = "transfers";
 
    @Autowired
    private WebClient webClient;
@@ -119,7 +119,7 @@ public class BankService {
     public Mono<Transaction> transactionMono(String reference) {
         Optional<Transaction> transactionOptional = getTransaction(reference);
         if (transactionOptional.isEmpty()) {
-            return Mono.error(new CustomException("Transaction not found"));
+            return Mono.error(new BadRequestException("Transaction not found"));
         }
         Transaction transaction = transactionOptional.get();
         String sessionId = transaction.getSessionId();
@@ -173,13 +173,13 @@ public class BankService {
         }
     }
 
-    public Mono<CustomException> handle4xxErrorResponse(ClientResponse clientResponse) {
+    public Mono<BadRequestException> handle4xxErrorResponse(ClientResponse clientResponse) {
 
       Mono<Message> errorResponse = clientResponse.bodyToMono(Message.class);
       return errorResponse.flatMap((message) -> {
 //         ErrorMessage errorMessage = new ErrorMessage(clientResponse.statusCode(), message.getDescription());
          log.error("ErrorResponse Code is 4XX " + clientResponse.rawStatusCode() + " and the exception message is : " + message);
-         return Mono.error(new CustomException(message.message()));
+         return Mono.error(new BadRequestException(message.message()));
       });
    }
 

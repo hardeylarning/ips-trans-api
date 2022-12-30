@@ -1,7 +1,6 @@
 package com.roq.ita.service;
 
-import com.roq.ita.exception.CustomException;
-import com.roq.ita.exception.ErrorMessage;
+import com.roq.ita.exception.BadRequestException;
 import com.roq.ita.exception.InternalServerException;
 import com.roq.ita.model.*;
 import com.roq.ita.model.flutter.*;
@@ -24,7 +23,6 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.atomic.AtomicReference;
 
 
 @Service
@@ -108,7 +106,7 @@ public class PaystackService {
     public Mono<Transaction> psTransfer(TransferRequest request) {
        String recipient = recipientGenerator(request);
        if (recipient.equals("")){
-           return Mono.error(new CustomException("Recipient not yet generated"));
+           return Mono.error(new BadRequestException("Recipient not yet generated"));
        }
        PaystackTransferRequest transferRequest = new PaystackTransferRequest();
        transferRequest.setRecipient(recipient);
@@ -139,37 +137,8 @@ public class PaystackService {
                     checkStatus(response, data);
                     Transaction transaction = transactionRepository.save(response);
                     return Mono.just(transaction);
-                })
-                .retryWhen(Retry.backoff(request.getMaxRetryAttempt(), Duration.ofSeconds(5)));
-
-    }
-
-    public Mono<Transaction> transactionMono(String reference) {
-        Optional<Transaction> transactionOptional = getTransaction(reference);
-        if (transactionOptional.isEmpty()) {
-            return Mono.error(new CustomException("Transaction not found"));
-        }
-        Transaction transaction = transactionOptional.get();
-        String sessionId = transaction.getSessionId();
-        String  id = sessionId.substring(sessionId.lastIndexOf("|")+1);
-        log.info("ID:=> from database: {}", id);
-        return webClient.get()
-                .uri(TRANSFER_URL+"/"+id)
-                .retrieve()
-                .onStatus(HttpStatus::is4xxClientError, this::handle4xxErrorResponse)
-                .onStatus(HttpStatus::is5xxServerError, this::handle5xxErrorResponse)
-                .onStatus(HttpStatus::isError, this::handle5xxErrorResponse)
-                .bodyToMono(PaystackTransferResponse.class)
-                .flatMap(rs -> {
-                    TransferData data = rs.getData();
-                    if (data.status().equalsIgnoreCase(transaction.getStatus())){
-                        return Mono.just(transaction);
-                    }
-                    transaction.setStatus(data.status());
-                    checkStatus(transaction, data);
-                    transactionRepository.save(transaction);
-                    return Mono.just(transaction);
                 });
+
     }
 
     private void checkStatus(Transaction transaction, TransferData data) {
@@ -201,13 +170,13 @@ public class PaystackService {
         }
     }
 
-    public Mono<CustomException> handle4xxErrorResponse(ClientResponse clientResponse) {
+    public Mono<BadRequestException> handle4xxErrorResponse(ClientResponse clientResponse) {
 
       Mono<Message> errorResponse = clientResponse.bodyToMono(Message.class);
       return errorResponse.flatMap((message) -> {
 //         ErrorMessage errorMessage = new ErrorMessage(clientResponse.statusCode(), message.getDescription());
          log.error("ErrorResponse Code is 4XX " + clientResponse.rawStatusCode() + " and the exception message is : " + message);
-         return Mono.error(new CustomException(message.message()));
+         return Mono.error(new BadRequestException(message.message()));
       });
    }
 
